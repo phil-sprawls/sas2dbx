@@ -1,0 +1,14 @@
+graph LR
+    INV[Inventory] --> LAND[Land inputs + ground truth]
+    LAND --> PRE[Preprocess SAS]
+    PRE --> TR[Translate via AI gateway]
+    TR --> EX[Execute in sandbox]
+    EX -- traceback --> RR[Repair: make it run, max 3/step]
+    RR --> EX
+    EX --> VAL[Validate vs ground truth]
+    VAL -- diff report --> RM[Repair: make it match, max 5/program]
+    RM --> TR
+    VAL -- pass --> CERT[Parity certificate]
+    RR -- exhausted --> TRI[Triage queue]
+    RM -- exhausted --> TRI
+    VAL -- budget cap --> TRI
