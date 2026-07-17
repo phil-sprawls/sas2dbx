@@ -103,11 +103,15 @@ One file, one job, unit-testable off-cluster where feasible.
    DATA-step/PROC boundaries into an ordered step list. Complex `%macro` bodies pass
    through whole, flagged for the LLM.
 5. **Translator** (`translate.py`) — per step: SAS code + live schemas of referenced
-   tables + a SAS↔Spark gotcha cribsheet → Spark SQL preferred, PySpark when
-   relational SQL can't express it (flagged). Structured output: JSON header
-   (language, inputs, outputs) + code block. Cribsheet covers: date epochs,
-   missing-value comparison semantics, implicit RETAIN, PROC MEANS default
-   statistics, FIRST./LAST. processing, formats/informats.
+   tables (including tables created by earlier steps in this program) + the original
+   full program as reference context + a SAS↔Spark gotcha cribsheet → Spark SQL
+   preferred, PySpark when relational SQL can't express it (flagged). The LLM sees
+   the whole program but is asked to translate one step — step-scoped calls raise
+   per-call accuracy and make repair attributable to the step that built the wrong
+   table. Structured output: JSON header (language, inputs, outputs) + code block.
+   Cribsheet covers: date epochs, missing-value comparison semantics, implicit
+   RETAIN, PROC MEANS default statistics, FIRST./LAST. processing,
+   formats/informats.
 6. **Executor** (`execute.py`) — runs generated steps in order against frozen input
    snapshots, writing only to the program's sandbox schema. Per-step timeout;
    exceptions captured with full traceback for the repair loop.
@@ -115,10 +119,19 @@ One file, one job, unit-testable off-cluster where feasible.
    alignment (name-normalized) → row counts → order-insensitive full comparison →
    per-column diff. Produces a structured **DiffReport**: sample missing/extra rows,
    sample mismatched cells, per-column mismatch rates.
-8. **RepairLoop** (`repair.py`) — orchestrates translate → execute → validate, max
-   5 attempts per program. On failure the LLM receives the current code plus the
-   traceback or DiffReport — it fixes against evidence. Every attempt logged to
-   `control.attempts`.
+8. **RepairLoop** (`repair.py`) — two nested loops with separate budgets, because
+   "doesn't run" and "runs but doesn't match" are different failure classes with
+   different signals and costs:
+   - **Inner loop — "make it run"** (per step, max 3 attempts): syntax error or
+     runtime exception → LLM receives the step's code plus the full traceback,
+     returns a fix. Cheap, fast signal.
+   - **Outer loop — "make it match"** (per program, max 5 attempts): all steps run
+     but an output table diverges → LLM receives the implicated step(s) plus the
+     DiffReport. Each outer attempt gets a fresh inner budget.
+
+   Exhausting either budget routes to triage with the exhausted loop recorded —
+   "never ran" and "ran but diverged" are triaged differently. Every attempt in
+   both loops logged to `control.attempts` with loop type.
 9. **Reporter** (`report.py`) — on pass: **parity certificate** (program, attempts,
    tables/rows/cells compared, tolerances used, snapshot hashes) — the audit
    artifact for sign-off. On failure: **triage report** (closest attempt's code,
@@ -165,3 +178,10 @@ One file, one job, unit-testable off-cluster where feasible.
 Built and unit-tested in `~/dev/sas2dbx` (this repo), then pushed to a git remote
 Phil syncs into Databricks Repos at work. Nothing here depends on the public
 internet at runtime except the company gateway.
+
+The real gateway contract and real SAS programs live only inside the company
+tenant. Development here uses a `MockGateway` implementation (same interface as
+`GatewayClient`, canned/scripted responses) and synthetic SAS fixtures, so the
+in-tenant work is limited to: (1) filling in the real HTTP request/response mapping
+in `gateway.py`, (2) registering real programs in the inventory, (3) running the
+golden set.
