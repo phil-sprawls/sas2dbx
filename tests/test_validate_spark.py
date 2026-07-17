@@ -66,3 +66,36 @@ def test_validate_program_aggregates(spark, base_tables):
     _write_out(spark, [(1, "east", 100.0), (2, "west", 200.5), (3, "east", 300.25)])
     report = validate_program(spark, "p1", [("vt.gt", "vt.out", ["id"])])
     assert report.passed and report.program_id == "p1"
+
+
+def _write_pair(spark, gt_rows, out_rows, schema):
+    spark.sql("CREATE SCHEMA IF NOT EXISTS vt")
+    spark.sql("DROP TABLE IF EXISTS vt.gt2")
+    spark.sql("DROP TABLE IF EXISTS vt.out2")
+    spark.createDataFrame(gt_rows, schema).write.saveAsTable("vt.gt2")
+    spark.createDataFrame(out_rows, schema).write.saveAsTable("vt.out2")
+
+
+def test_duplicate_keys_identical_multisets_pass(spark):
+    _write_pair(spark,
+                [(1, "east", 100.0), (1, "west", 200.0)],
+                [(1, "west", 200.0), (1, "east", 100.0)],
+                "id INT, region STRING, balance DOUBLE")
+    assert compare_tables(spark, "vt.gt2", "vt.out2", keys=["id"]).passed
+
+
+def test_duplicate_keys_with_real_difference_fail(spark):
+    _write_pair(spark,
+                [(1, "east", 100.0), (1, "west", 200.0)],
+                [(1, "east", 100.0), (1, "east", 100.0)],
+                "id INT, region STRING, balance DOUBLE")
+    d = compare_tables(spark, "vt.gt2", "vt.out2", keys=["id"])
+    assert not d.passed and d.missing_rows == 1 and d.extra_rows == 1
+
+
+def test_keyed_tolerance_uses_max_not_sum(spark):
+    # diff ~1.5e-12 on values ~1e-3: max-semantics threshold is 1e-12 (fail);
+    # the old sum formula's threshold was 2e-12 (would wrongly pass).
+    _write_pair(spark, [(1, 0.001)], [(1, 0.001 + 1.5e-12)], "id INT, v DOUBLE")
+    d = compare_tables(spark, "vt.gt2", "vt.out2", keys=["id"], rel_tol=1e-9)
+    assert not d.passed

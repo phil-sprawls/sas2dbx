@@ -102,6 +102,13 @@ def _hash_expr(cols: dict[str, str]) -> str:
     return f"sha2(concat_ws('\\x1f', {', '.join(parts)}), 256)"
 
 
+def _has_duplicate_keys(spark, table: str, keys: list[str]) -> bool:
+    cols = ", ".join(f"`{k.lower()}`" for k in keys)
+    row = spark.sql(f"SELECT max(cnt) AS m FROM (SELECT count(*) AS cnt "
+                    f"FROM {table} GROUP BY {cols})").collect()[0]
+    return (row["m"] or 0) > 1
+
+
 def compare_tables(spark, gt_table: str, out_table: str,
                    keys: list[str] | None = None, rel_tol: float = 1e-9,
                    sample_limit: int = 5) -> TableDiff:
@@ -116,6 +123,12 @@ def compare_tables(spark, gt_table: str, out_table: str,
     out_rows = spark.table(out_table).count()
 
     if keys:
+        if (_has_duplicate_keys(spark, gt_table, keys)
+                or _has_duplicate_keys(spark, out_table, keys)):
+            # A join on duplicate keys inflates mismatches on identical data;
+            # the multiset hash diff is exact for duplicates, so fall back.
+            return _compare_keyless(spark, gt_table, out_table, gt_cols,
+                                    gt_rows, out_rows)
         return _compare_keyed(spark, gt_table, out_table, gt_cols, keys,
                               rel_tol, sample_limit, gt_rows, out_rows)
     return _compare_keyless(spark, gt_table, out_table, gt_cols,
@@ -144,7 +157,7 @@ def _compare_keyed(spark, gt_table, out_table, cols, keys, rel_tol,
             mismatch = (f"NOT (g.`{name}` <=> o.`{name}`) AND NOT ("
                         f"g.`{name}` IS NOT NULL AND o.`{name}` IS NOT NULL AND "
                         f"abs(g.`{name}` - o.`{name}`) <= "
-                        f"greatest(abs(g.`{name}`), abs(o.`{name}`)) * {rel_tol} + 1e-12)")
+                        f"greatest(greatest(abs(g.`{name}`), abs(o.`{name}`)) * {rel_tol}, 1e-12))")
         else:
             mismatch = f"NOT (g.`{name}` <=> o.`{name}`)"
         rows = spark.sql(
