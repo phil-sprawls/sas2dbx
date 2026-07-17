@@ -8,3 +8,5 @@ metastore_db/
 derby.log
 *.egg-info/
 .superpowers/
+.gstack/
+docs/*.pdf
