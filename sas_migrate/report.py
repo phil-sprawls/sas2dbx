@@ -22,7 +22,7 @@ def parity_certificate(rec: ProgramRecord, outcome: ProgramOutcome,
     tol = rec.float_rel_tol if rec.float_rel_tol is not None else config.float_rel_tol
     tables = "\n".join(
         f"| {t.table} | {t.gt_rows} | {t.out_rows} | "
-        f"{'PASS' if t.passed else 'FAIL'} |"
+        f"{'PASS' if t.passed else 'FAIL'} | {t.method} |"
         for t in diff.table_diffs)
     snaps = "\n".join(f"- `{t}`: `{h}`" for t, h in sorted(snapshot_hashes.items())) \
             or "- (none recorded)"
@@ -36,8 +36,8 @@ def parity_certificate(rec: ProgramRecord, outcome: ProgramOutcome,
 
 ## Tables compared (order-insensitive)
 
-| output table | ground-truth rows | output rows | result |
-|---|---|---|---|
+| output table | ground-truth rows | output rows | result | method |
+|---|---|---|---|---|
 {tables}
 
 ## Input snapshots (content hashes)

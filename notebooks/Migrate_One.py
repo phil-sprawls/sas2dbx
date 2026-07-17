@@ -11,6 +11,7 @@ dbutils.widgets.text("sas_path", "", "Path to .sas file (Workspace/Volumes)")
 dbutils.widgets.text("owner", "", "Owner (your name)")
 dbutils.widgets.text("inputs_json", "{}", 'Input map {"libref.table": "catalog.schema.table"}')
 dbutils.widgets.text("ground_truth_json", "{}", 'GT map {"sas_out": "catalog.schema.table"}')
+dbutils.widgets.text("keys_json", "{}", 'Key columns {"sas_out": ["id"]}')
 dbutils.widgets.text("float_rel_tol", "", "Tolerance override (blank = 1e-9)")
 
 # COMMAND ----------
@@ -27,6 +28,13 @@ from sas_migrate.translate import Translator
 
 config = MigrationConfig(
     gateway_base_url=dbutils.secrets.get("sas2dbx", "gateway_url"))
+
+# COMMAND ----------
+
+spark.sql(f"USE CATALOG {config.catalog}")
+
+# COMMAND ----------
+
 store = DeltaStateStore(spark, config)
 gateway = RestGatewayClient(
     config, auth_token=dbutils.secrets.get("sas2dbx", "gateway_token"),
@@ -45,6 +53,7 @@ rec = ProgramRecord(
     owner=dbutils.widgets.get("owner"),
     inputs=json.loads(dbutils.widgets.get("inputs_json")),
     ground_truth=json.loads(dbutils.widgets.get("ground_truth_json")),
+    keys=json.loads(dbutils.widgets.get("keys_json")),
     float_rel_tol=float(tol) if tol else None)
 deps.inventory.register(rec)
 outcome = migrate_program(spark, rec, deps)
@@ -54,6 +63,12 @@ print(f"RESULT: {outcome.status}  (mode={outcome.failure_mode}, "
 # COMMAND ----------
 
 # Show the certificate / triage report
-latest = [r for r in store.scan("parity_results")
-          if r["program_id"] == rec.program_id][-1]
-displayHTML(f"<pre>{latest['report']}</pre>")
+import html
+
+matching = [r for r in store.scan("parity_results")
+            if r["program_id"] == rec.program_id]
+if not matching:
+    print(f"No parity_results rows found for program_id {rec.program_id!r}")
+else:
+    latest = matching[-1]
+    displayHTML(f"<pre>{html.escape(latest['report'])}</pre>")

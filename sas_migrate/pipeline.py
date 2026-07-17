@@ -2,10 +2,12 @@
 Notebooks call migrate_program / migrate_batch and nothing else."""
 from __future__ import annotations
 
+import traceback
 from dataclasses import dataclass
 
 from sas_migrate.config import MigrationConfig
 from sas_migrate.execute import Executor
+from sas_migrate.gateway import CircuitOpenError
 from sas_migrate.inventory import Inventory, ProgramRecord
 from sas_migrate.preprocess import preprocess
 from sas_migrate.repair import ProgramOutcome, RepairLoop
@@ -35,40 +37,55 @@ def build_table_schemas(spark, tables: list[str]) -> dict[str, str]:
     return out
 
 
-def _table_pairs(rec: ProgramRecord, sandbox: str) -> list[tuple[str, str, None]]:
-    """Ground-truth table -> expected sandbox output (same base name).
-    Keyless by default; keyed comparison via per-program config is a
-    notebook-level override passed straight to validate_program."""
-    return [(gt, f"{sandbox}.{name.split('.')[-1]}", None)
+def _table_pairs(rec: ProgramRecord, sandbox: str) -> list[tuple[str, str, list[str] | None]]:
+    """Ground-truth table -> expected sandbox output (same base name), paired
+    with the per-output key columns from rec.keys (if any). Keyless when a
+    given output name has no entry in rec.keys."""
+    return [(gt, f"{sandbox}.{name.split('.')[-1]}", rec.keys.get(name))
             for name, gt in sorted(rec.ground_truth.items())]
 
 
 def migrate_program(spark, rec: ProgramRecord, deps: PipelineDeps) -> ProgramOutcome:
-    cfg = deps.config
-    steps, full_program = preprocess(rec.sas_path)
-    deps.inventory.set_status(rec.program_id, "landed")
+    try:
+        cfg = deps.config
+        steps, full_program = preprocess(rec.sas_path)
+        deps.inventory.set_status(rec.program_id, "landed")
 
-    executor = Executor(spark, cfg, rec.program_id)
-    sandbox = cfg.sandbox_schema(rec.program_id)
-    tol = rec.float_rel_tol if rec.float_rel_tol is not None else cfg.float_rel_tol
-    schemas = build_table_schemas(spark, list(rec.inputs.values()))
+        executor = Executor(spark, cfg, rec.program_id)
+        sandbox = cfg.sandbox_schema(rec.program_id)
+        tol = rec.float_rel_tol if rec.float_rel_tol is not None else cfg.float_rel_tol
+        schemas = build_table_schemas(spark, list(rec.inputs.values()))
 
-    def validate():
-        deps.inventory.set_status(rec.program_id, "validating")
-        return validate_program(spark, rec.program_id,
-                                _table_pairs(rec, sandbox), rel_tol=tol)
+        def validate():
+            deps.inventory.set_status(rec.program_id, "validating")
+            return validate_program(spark, rec.program_id,
+                                    _table_pairs(rec, sandbox), rel_tol=tol)
 
-    loop = RepairLoop(deps.translator, cfg,
-                      on_attempt=lambda a: deps.store.append("attempts", a))
-    outcome, translated, diff = loop.run(
-        rec.program_id, steps, full_program, schemas, rec.inputs,
-        executor, validate)
+        expected = [f"{sandbox}.{name.split('.')[-1]}" for name in sorted(rec.ground_truth)]
 
-    deps.inventory.set_status(
-        rec.program_id, outcome.status,
-        error=outcome.last_error, failure_mode=outcome.failure_mode)
-    deps.reporter.record(rec, outcome, diff, translated, snapshot_hashes={})
-    return outcome
+        loop = RepairLoop(deps.translator, cfg,
+                          on_attempt=lambda a: deps.store.append("attempts", a))
+        deps.inventory.set_status(rec.program_id, "translated")
+        outcome, translated, diff = loop.run(
+            rec.program_id, steps, full_program, schemas, rec.inputs,
+            executor, validate, expected_outputs=expected)
+
+        deps.inventory.set_status(
+            rec.program_id, outcome.status,
+            error=outcome.last_error, failure_mode=outcome.failure_mode)
+        deps.reporter.record(rec, outcome, diff, translated, snapshot_hashes={})
+        return outcome
+    except CircuitOpenError:
+        deps.inventory.set_status(rec.program_id, "triage",
+                                  error="gateway circuit open", failure_mode="never_ran")
+        raise  # halting the batch is the circuit breaker's job
+    except Exception:
+        err = traceback.format_exc()
+        outcome = ProgramOutcome(rec.program_id, "triage", "never_ran", 0, 0, err)
+        deps.inventory.set_status(rec.program_id, "triage", error=err,
+                                  failure_mode="never_ran")
+        deps.reporter.record(rec, outcome, None, {}, snapshot_hashes={})
+        return outcome
 
 
 def migrate_batch(spark, deps: PipelineDeps,
@@ -77,11 +94,17 @@ def migrate_batch(spark, deps: PipelineDeps,
 
     batch_budget = TokenBudget(deps.config.per_batch_token_cap)
     results: dict = {"parity_pass": [], "triage": []}
-    records = ([deps.inventory.get(pid) for pid in program_ids] if program_ids
-               else deps.inventory.pending())
+    if program_ids:
+        records = []
+        for pid in program_ids:
+            rec = deps.inventory.get(pid)
+            if rec is None:
+                print(f"skipping unknown program_id {pid!r}")
+                continue
+            records.append(rec)
+    else:
+        records = deps.inventory.pending()
     for rec in records:
-        if rec is None:
-            continue
         # Fresh per-program budget each iteration; charge its actual usage
         # against the batch cap afterwards.
         deps.translator.budget = TokenBudget(deps.config.per_program_token_cap)

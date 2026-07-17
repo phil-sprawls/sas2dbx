@@ -35,6 +35,18 @@ SQL_WRITE_RE = re.compile(
 PY_WRITE_RE = re.compile(
     r"\.(?:saveAsTable|insertInto|writeTo)\(\s*[rbfuRBFU]{0,2}['\"]([^'\"]+)['\"]")
 
+# Generated code never legitimately needs to change schema/catalog context or
+# write raw directories — that's host-controlled (Executor.reset sets the
+# sandbox database) or simply out of scope for a translated step. Block these
+# outright rather than trying to scope them; false positives here just route
+# the step to the repair loop, same as the write-verbs-in-comments risk noted
+# above for SQL_WRITE_RE/PY_WRITE_RE.
+FORBIDDEN_RE = re.compile(
+    r"\b(?:use\s+(?:catalog\s+|schema\s+|database\s+)?\w|"
+    r"(?:drop|create)\s+(?:schema|database)\b|"
+    r"insert\s+overwrite\s+(?:local\s+)?directory\b)", re.IGNORECASE)
+PY_FORBIDDEN_RE = re.compile(r"\.set(?:CurrentDatabase|CurrentCatalog)\s*\(")
+
 
 def _scan_text(code: str) -> str:
     scan = code.replace("`", "")            # identifier quoting
@@ -50,6 +62,17 @@ def check_sandbox(code: str, sandbox_schema: str) -> None:
     # text too guarantees it can never hide one. Prefer a false positive
     # over a bypass.
     raw = code.replace("`", "")
+    m = FORBIDDEN_RE.search(raw) or FORBIDDEN_RE.search(_scan_text(code))
+    if m:
+        raise SandboxViolation(
+            f"generated code may not change schema/catalog context or write "
+            f"directories (matched {m.group(0)!r})")
+    m = PY_FORBIDDEN_RE.search(code)
+    if m:
+        raise SandboxViolation(
+            f"generated code may not change schema/catalog context or write "
+            f"directories (matched {m.group(0)!r})")
+
     targets = [m.group(1) for m in SQL_WRITE_RE.finditer(raw)]
     targets += [m.group(1) for m in SQL_WRITE_RE.finditer(_scan_text(code))]
     targets += [m.group(1).replace("`", "") for m in PY_WRITE_RE.finditer(code)]

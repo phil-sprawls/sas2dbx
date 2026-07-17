@@ -43,6 +43,7 @@ class TableDiff:
     extra_rows: int     # in output, absent from ground truth
     column_diffs: list[ColumnDiff] = field(default_factory=list)
     error: str | None = None
+    method: str = ""
 
     @property
     def passed(self) -> bool:
@@ -112,27 +113,31 @@ def _has_duplicate_keys(spark, table: str, keys: list[str]) -> bool:
 def compare_tables(spark, gt_table: str, out_table: str,
                    keys: list[str] | None = None, rel_tol: float = 1e-9,
                    sample_limit: int = 5) -> TableDiff:
-    gt_cols, out_cols = _columns(spark, gt_table), _columns(spark, out_table)
-    if set(gt_cols) != set(out_cols):
-        only_gt = sorted(set(gt_cols) - set(out_cols))
-        only_out = sorted(set(out_cols) - set(gt_cols))
-        return TableDiff(out_table, 0, 0, 0, 0, error=(
-            f"schema mismatch: ground-truth-only columns {only_gt}, "
-            f"output-only columns {only_out}"))
-    gt_rows = spark.table(gt_table).count()
-    out_rows = spark.table(out_table).count()
+    try:
+        gt_cols, out_cols = _columns(spark, gt_table), _columns(spark, out_table)
+        if set(gt_cols) != set(out_cols):
+            only_gt = sorted(set(gt_cols) - set(out_cols))
+            only_out = sorted(set(out_cols) - set(gt_cols))
+            return TableDiff(out_table, 0, 0, 0, 0, error=(
+                f"schema mismatch: ground-truth-only columns {only_gt}, "
+                f"output-only columns {only_out}"), method="error")
+        gt_rows = spark.table(gt_table).count()
+        out_rows = spark.table(out_table).count()
 
-    if keys:
-        if (_has_duplicate_keys(spark, gt_table, keys)
-                or _has_duplicate_keys(spark, out_table, keys)):
-            # A join on duplicate keys inflates mismatches on identical data;
-            # the multiset hash diff is exact for duplicates, so fall back.
-            return _compare_keyless(spark, gt_table, out_table, gt_cols,
-                                    gt_rows, out_rows)
-        return _compare_keyed(spark, gt_table, out_table, gt_cols, keys,
-                              rel_tol, sample_limit, gt_rows, out_rows)
-    return _compare_keyless(spark, gt_table, out_table, gt_cols,
-                            gt_rows, out_rows)
+        if keys:
+            if (_has_duplicate_keys(spark, gt_table, keys)
+                    or _has_duplicate_keys(spark, out_table, keys)):
+                # A join on duplicate keys inflates mismatches on identical data;
+                # the multiset hash diff is exact for duplicates, so fall back.
+                return _compare_keyless(spark, gt_table, out_table, gt_cols,
+                                        gt_rows, out_rows, dup_key_fallback=True)
+            return _compare_keyed(spark, gt_table, out_table, gt_cols, keys,
+                                  rel_tol, sample_limit, gt_rows, out_rows)
+        return _compare_keyless(spark, gt_table, out_table, gt_cols,
+                                gt_rows, out_rows)
+    except Exception as e:  # noqa: BLE001 - missing/inaccessible table must not crash the batch
+        return TableDiff(out_table, 0, 0, 0, 0, error=f"table access failed: {e}",
+                         method="error")
 
 
 def _compare_keyed(spark, gt_table, out_table, cols, keys, rel_tol,
@@ -172,10 +177,12 @@ def _compare_keyed(spark, gt_table, out_table, cols, keys, rel_tol,
             column_diffs.append(ColumnDiff(name, count, total, samples))
         else:
             column_diffs.append(ColumnDiff(name, 0, total))
-    return TableDiff(out_table, gt_rows, out_rows, missing, extra, column_diffs)
+    return TableDiff(out_table, gt_rows, out_rows, missing, extra, column_diffs,
+                     method=f"keyed rel_tol={rel_tol:g}")
 
 
-def _compare_keyless(spark, gt_table, out_table, cols, gt_rows, out_rows) -> TableDiff:
+def _compare_keyless(spark, gt_table, out_table, cols, gt_rows, out_rows,
+                     dup_key_fallback: bool = False) -> TableDiff:
     """Multiset diff on row hashes. Float columns are normalized to 10
     significant digits (%.9e) before hashing — the documented tolerance proxy
     for keyless comparison; keyed comparison uses true relative tolerance."""
@@ -188,7 +195,10 @@ def _compare_keyless(spark, gt_table, out_table, cols, gt_rows, out_rows) -> Tab
         WHERE coalesce(g.n, 0) != coalesce(o.n, 0)""").collect()
     missing = sum(max(r["gn"] - r["onn"], 0) for r in diff)
     extra = sum(max(r["onn"] - r["gn"], 0) for r in diff)
-    return TableDiff(out_table, gt_rows, out_rows, missing, extra)
+    method = "keyless-hash(%.9e)"
+    if dup_key_fallback:
+        method += " [duplicate-key fallback; rel_tol not applied]"
+    return TableDiff(out_table, gt_rows, out_rows, missing, extra, method=method)
 
 
 def validate_program(spark, program_id: str,

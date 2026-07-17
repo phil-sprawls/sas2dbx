@@ -26,6 +26,26 @@ def test_translation_prompt_contains_step_context_and_rules():
     assert "Spark SQL" in SYSTEM_PROMPT
 
 
+def test_translation_prompt_lists_expected_output_tables():
+    step = SasStep(index=2, kind="proc", code="proc sql;\ncreate table work.s as select 1;\nquit;")
+    messages = build_translation_prompt(
+        step, full_program="/* program */",
+        table_schemas={}, input_mappings={}, sandbox_schema="sandbox_p1",
+        expected_outputs=["sandbox_p1.filtered", "sandbox_p1.summary"])
+    text = _prompt_text(messages)
+    assert "Required final output tables" in text
+    assert "sandbox_p1.filtered" in text and "sandbox_p1.summary" in text
+
+
+def test_translation_prompt_omits_expected_output_section_by_default():
+    step = SasStep(index=2, kind="proc", code="proc sql;\ncreate table work.s as select 1;\nquit;")
+    messages = build_translation_prompt(
+        step, full_program="/* program */",
+        table_schemas={}, input_mappings={}, sandbox_schema="sandbox_p1")
+    text = _prompt_text(messages)
+    assert "Required final output tables" not in text
+
+
 def test_run_repair_prompt_includes_traceback():
     messages = build_run_repair_prompt("SELECT bad", "sql", "AnalysisException: bad")
     text = _prompt_text(messages)

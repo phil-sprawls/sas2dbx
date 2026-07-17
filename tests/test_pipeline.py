@@ -82,6 +82,20 @@ def test_migrate_program_reaches_parity_first_try(env):
     assert store.scan("parity_results")[0]["status"] == "parity_pass"
 
 
+def test_migrate_program_missing_sas_path_is_contained_as_triage(spark, tmp_path):
+    store = LocalJsonStateStore(str(tmp_path / "state"))
+    deps = _deps(store, [])
+    rec = ProgramRecord("bad1", str(tmp_path / "does_not_exist.sas"), "phil")
+    deps.inventory.register(rec)
+    outcome = migrate_program(spark, rec, deps)
+    assert outcome.status == "triage"
+    assert outcome.failure_mode == "never_ran"
+    assert deps.inventory.get("bad1").status == "triage"
+    assert deps.inventory.get("bad1").error
+    rows = store.scan("parity_results")
+    assert rows and rows[0]["status"] == "triage"
+
+
 def test_migrate_program_repairs_divergence_then_passes(env):
     spark, store, rec = env
     deps = _deps(store, [BAD_THEN_FIXED, GOOD_RESPONSE])  # wrong filter, then fixed

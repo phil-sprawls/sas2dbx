@@ -34,7 +34,8 @@ class RepairLoop:
 
     def run(self, program_id: str, steps: list[SasStep], full_program: str,
             table_schemas: dict, input_mappings: dict, executor,
-            validate: Callable[[], DiffReport]
+            validate: Callable[[], DiffReport],
+            expected_outputs: list[str] | None = None
             ) -> tuple[ProgramOutcome, dict[int, TranslatedStep], DiffReport | None]:
         translated: dict[int, TranslatedStep] = {}
         diff: DiffReport | None = None
@@ -45,7 +46,8 @@ class RepairLoop:
                 if step.kind in TRANSLATABLE:
                     translated[step.index] = self.translator.translate(
                         step, full_program, table_schemas, input_mappings,
-                        executor.schema, program_id)
+                        executor.schema, program_id,
+                        expected_outputs=expected_outputs)
 
             if not translated:
                 return (ProgramOutcome(program_id, "triage", "never_ran", 0, 0,

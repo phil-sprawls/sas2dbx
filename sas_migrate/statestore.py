@@ -130,8 +130,9 @@ class DeltaStateStore(StateStore):
                 return []
             kind = "kv" if self._cols(table) == self.KV_COLS else "log"
             self._ensured[table] = kind
+        order_col = "updated_at" if kind == "kv" else "ts"
         return [json.loads(r["payload"]) for r in self.spark.sql(
-            f"SELECT payload FROM {self.ns}.{table}").collect()]
+            f"SELECT payload FROM {self.ns}.{table} ORDER BY {order_col}").collect()]
 
     def append(self, table, row):
         self._ensure(table, "log")

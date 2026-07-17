@@ -41,3 +41,11 @@ def test_pending_excludes_parity_pass(tmp_path):
     inv.register(make_rec("p2"))
     inv.set_status("p1", "parity_pass")
     assert [r.program_id for r in inv.pending()] == ["p2"]
+
+
+def test_keys_round_trip(tmp_path):
+    inv = Inventory(LocalJsonStateStore(str(tmp_path)))
+    rec = make_rec()
+    rec.keys = {"final_report": ["id"]}
+    inv.register(rec)
+    assert inv.get("p1").keys == {"final_report": ["id"]}

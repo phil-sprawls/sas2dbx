@@ -18,6 +18,7 @@ class ProgramRecord:
     owner: str
     inputs: dict = field(default_factory=dict)        # sas libref.table -> catalog table
     ground_truth: dict = field(default_factory=dict)  # sas output name -> catalog table
+    keys: dict = field(default_factory=dict)          # sas output name -> list of key columns
     status: str = "registered"
     error: str | None = None
     failure_mode: str | None = None   # never_ran | diverged | budget | None

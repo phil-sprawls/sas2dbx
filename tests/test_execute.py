@@ -57,6 +57,21 @@ def test_check_sandbox_blocks_update_delete_alter_replace():
                   "WHEN MATCHED THEN UPDATE SET x = 1", "sandbox_p1")
 
 
+def test_check_sandbox_blocks_schema_catalog_context_statements():
+    for stmt in ('USE staging_inputs',
+                 'DROP SCHEMA ground_truth CASCADE',
+                 'CREATE SCHEMA evil',
+                 'spark.catalog.setCurrentDatabase("staging_inputs")',
+                 "INSERT OVERWRITE DIRECTORY '/tmp/x' SELECT 1"):
+        with pytest.raises(SandboxViolation):
+            check_sandbox(stmt, "sandbox_p1")
+
+
+def test_check_sandbox_still_allows_existing_cases():
+    check_sandbox("CREATE TABLE sandbox_p1.x AS SELECT 1", "sandbox_p1")
+    check_sandbox("SELECT * FROM ground_truth.gt", "sandbox_p1")
+
+
 def test_check_sandbox_blocks_prefix_string_literals():
     with pytest.raises(SandboxViolation):
         check_sandbox('df.write.saveAsTable(f"ground_truth.x")', "sandbox_p1")

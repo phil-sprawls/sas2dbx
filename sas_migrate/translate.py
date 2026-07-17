@@ -55,20 +55,28 @@ def _schemas_block(table_schemas: dict[str, str]) -> str:
 def build_translation_prompt(step: SasStep, full_program: str,
                              table_schemas: dict[str, str],
                              input_mappings: dict[str, str],
-                             sandbox_schema: str) -> list[dict]:
+                             sandbox_schema: str,
+                             expected_outputs: list[str] | None = None) -> list[dict]:
     mappings = "\n".join(f"- SAS `{k}` -> `{v}`" for k, v in sorted(input_mappings.items())) \
                or "(none)"
+    expected_block = ""
+    if expected_outputs:
+        names = "\n".join(f"- `{name}`" for name in expected_outputs)
+        expected_block = f"""
+
+## Required final output tables (write EXACTLY these names)
+{names}"""
     content = f"""\
 Translate STEP {step.index} (kind={step.kind}) of the SAS program below.
 
 ## SAS libref -> catalog table mappings
 {mappings}
 
-## Live schemas of available tables (including tables created by earlier steps)
+## Schemas of input tables (tables created by earlier steps are not listed; refer to the full program)
 {_schemas_block(table_schemas)}
 
 ## Sandbox schema (ALL outputs must be written here)
-{sandbox_schema}
+{sandbox_schema}{expected_block}
 
 ## Full original program (REFERENCE ONLY — translate only the step)
 ```sas
@@ -195,9 +203,11 @@ class Translator:
             return parse_translation_response(resp2.text, step_index)
 
     def translate(self, step, full_program, table_schemas, input_mappings,
-                  sandbox_schema, program_id) -> TranslatedStep:
+                  sandbox_schema, program_id,
+                  expected_outputs: list[str] | None = None) -> TranslatedStep:
         messages = build_translation_prompt(step, full_program, table_schemas,
-                                            input_mappings, sandbox_schema)
+                                            input_mappings, sandbox_schema,
+                                            expected_outputs=expected_outputs)
         return self._call(messages, step.index, "translate", program_id)
 
     def repair_run(self, tstep: TranslatedStep, error_text: str,

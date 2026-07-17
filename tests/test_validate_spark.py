@@ -62,6 +62,48 @@ def test_schema_mismatch_reports_error(spark, base_tables):
     assert d.error and "balance" in d.error
 
 
+def test_compare_tables_missing_output_table_returns_error_diff(spark, base_tables):
+    d = compare_tables(spark, "vt.gt", "vt.does_not_exist")
+    assert d.error and "table access failed" in d.error
+    assert d.passed is False
+    assert d.method == "error"
+
+
+def test_compare_tables_method_set_on_keyed_path(spark, base_tables):
+    _write_out(spark, [(1, "east", 100.0), (2, "west", 200.5), (3, "east", 300.25)])
+    d = compare_tables(spark, "vt.gt", "vt.out", keys=["id"], rel_tol=1e-6)
+    assert d.method == "keyed rel_tol=1e-06"
+
+
+def test_compare_tables_method_set_on_keyless_path(spark, base_tables):
+    _write_out(spark, [(1, "east", 100.0), (2, "west", 200.5), (3, "east", 300.25)])
+    d = compare_tables(spark, "vt.gt", "vt.out", keys=None)
+    assert d.method.startswith("keyless-hash(")
+
+
+def test_compare_tables_method_set_on_schema_mismatch(spark, base_tables):
+    spark.sql("DROP TABLE IF EXISTS vt.out")
+    spark.createDataFrame([(1, "east")], "id INT, region STRING") \
+         .write.saveAsTable("vt.out")
+    d = compare_tables(spark, "vt.gt", "vt.out")
+    assert d.method == "error"
+
+
+def test_compare_tables_method_set_on_duplicate_key_fallback(spark):
+    spark.sql("CREATE SCHEMA IF NOT EXISTS vt")
+    spark.sql("DROP TABLE IF EXISTS vt.gt3")
+    spark.sql("DROP TABLE IF EXISTS vt.out3")
+    spark.createDataFrame(
+        [(1, "east", 100.0), (1, "west", 200.0)],
+        "id INT, region STRING, balance DOUBLE").write.saveAsTable("vt.gt3")
+    spark.createDataFrame(
+        [(1, "west", 200.0), (1, "east", 100.0)],
+        "id INT, region STRING, balance DOUBLE").write.saveAsTable("vt.out3")
+    d = compare_tables(spark, "vt.gt3", "vt.out3", keys=["id"])
+    assert "duplicate-key fallback" in d.method
+    assert "rel_tol not applied" in d.method
+
+
 def test_validate_program_aggregates(spark, base_tables):
     _write_out(spark, [(1, "east", 100.0), (2, "west", 200.5), (3, "east", 300.25)])
     report = validate_program(spark, "p1", [("vt.gt", "vt.out", ["id"])])

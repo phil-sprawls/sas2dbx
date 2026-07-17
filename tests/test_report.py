@@ -40,13 +40,13 @@ def test_certificate_uses_per_program_tolerance_override():
 def test_certificate_derives_per_table_result_from_diff():
     from sas_migrate.validate import ColumnDiff
     mixed = DiffReport("p1", [
-        TableDiff("sandbox_p1.ok", 10, 10, 0, 0),
+        TableDiff("sandbox_p1.ok", 10, 10, 0, 0, method="keyed rel_tol=1e-09"),
         TableDiff("sandbox_p1.bad", 10, 9, 1, 0,
-                  [ColumnDiff("x", 2, 9, [])]),
+                  [ColumnDiff("x", 2, 9, [])], method="keyless-hash(%.9e)"),
     ])
     cert = parity_certificate(_rec(), _pass_outcome(), mixed, MigrationConfig(), {})
-    assert "| sandbox_p1.ok | 10 | 10 | PASS |" in cert
-    assert "| sandbox_p1.bad | 10 | 9 | FAIL |" in cert
+    assert "| sandbox_p1.ok | 10 | 10 | PASS | keyed rel_tol=1e-09 |" in cert
+    assert "| sandbox_p1.bad | 10 | 9 | FAIL | keyless-hash(%.9e) |" in cert
 
 
 def test_triage_report_contains_mode_error_and_code():

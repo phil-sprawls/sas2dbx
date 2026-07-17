@@ -17,6 +17,13 @@ from sas_migrate.translate import Translator
 
 config = MigrationConfig(
     gateway_base_url=dbutils.secrets.get("sas2dbx", "gateway_url"))
+
+# COMMAND ----------
+
+spark.sql(f"USE CATALOG {config.catalog}")
+
+# COMMAND ----------
+
 store = DeltaStateStore(spark, config)
 gateway = RestGatewayClient(
     config, auth_token=dbutils.secrets.get("sas2dbx", "gateway_token"),
@@ -34,7 +41,8 @@ print(f"parity_pass: {len(results['parity_pass'])}  triage: {len(results['triage
 # COMMAND ----------
 
 # Status funnel
-import pandas as pd
+from collections import Counter
 rows = store.scan("inventory")
-display(spark.createDataFrame(pd.DataFrame(rows))
-        .groupBy("status").count().orderBy("status"))
+counts = Counter(r.get("status", "?") for r in rows)
+for status, n in sorted(counts.items()):
+    print(f"{status:12} {n}")

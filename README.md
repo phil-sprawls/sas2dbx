@@ -25,6 +25,12 @@ Dev-only deps (pytest, local pyspark) never ship to the cluster.
 4. Land ground-truth outputs and inputs (CSV/Parquet exported from SAS —
    `sas_migrate/landing.py` normalizes SAS quirks on the way in).
 5. Register the golden-set programs and run `notebooks/Migrate_Batch.py`.
+6. Notebooks issue `USE CATALOG <catalog>`; ensure it exists and you have
+   USE/CREATE on it.
+7. Verify `DeltaStateStore.upsert` explicitly (MERGE with parameter markers,
+   never spliced SQL text) on the golden set.
+8. Confirm the job-group timeout cancel path (`Executor._with_timeout`) fires
+   correctly on the golden set.
 
 ## Notebooks
 
