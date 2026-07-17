@@ -24,6 +24,33 @@ def test_check_sandbox_blocks_writes_outside():
         check_sandbox('df.write.saveAsTable("staging_inputs.x")', "sandbox_p1")
 
 
+def test_check_sandbox_blocks_backtick_quoted_writes():
+    with pytest.raises(SandboxViolation):
+        check_sandbox("CREATE TABLE `ground_truth`.`gt` AS SELECT 1", "sandbox_p1")
+
+
+def test_check_sandbox_handles_if_not_exists():
+    with pytest.raises(SandboxViolation):
+        check_sandbox("CREATE TABLE IF NOT EXISTS ground_truth.evil AS SELECT 1",
+                      "sandbox_p1")
+    check_sandbox("CREATE TABLE IF NOT EXISTS sandbox_p1.ok AS SELECT 1",
+                  "sandbox_p1")
+
+
+def test_check_sandbox_blocks_insertinto_and_writeto():
+    with pytest.raises(SandboxViolation):
+        check_sandbox('df.write.insertInto("staging_inputs.x")', "sandbox_p1")
+    with pytest.raises(SandboxViolation):
+        check_sandbox('df.writeTo("ground_truth.gt").append()', "sandbox_p1")
+    check_sandbox('df.write.insertInto("sandbox_p1.ok")', "sandbox_p1")
+
+
+def test_split_sql_handles_escaped_quotes():
+    stmts = split_sql("SELECT 'O''Brien; x' AS n; SELECT 2;")
+    assert len(stmts) == 2
+    assert "O''Brien; x" in stmts[0]
+
+
 @pytest.fixture()
 def executor(spark):
     ex = Executor(spark, MigrationConfig(), "p1")

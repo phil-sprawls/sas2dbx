@@ -27,15 +27,21 @@ class StepResult:
 
 
 SQL_WRITE_RE = re.compile(
-    r"\b(?:create\s+(?:or\s+replace\s+)?(?:table|view)|insert\s+(?:into|overwrite)"
-    r"(?:\s+table)?|merge\s+into|drop\s+table(?:\s+if\s+exists)?|truncate\s+table)"
-    r"\s+`?([\w.]+)`?", re.IGNORECASE)
-PY_WRITE_RE = re.compile(r"\.saveAsTable\(\s*['\"]([\w.]+)['\"]")
+    r"\b(?:create\s+(?:or\s+replace\s+)?(?:temp(?:orary)?\s+)?(?:table|view)"
+    r"(?:\s+if\s+not\s+exists)?|insert\s+(?:into|overwrite)(?:\s+table)?"
+    r"|merge\s+into|drop\s+table(?:\s+if\s+exists)?|truncate\s+table)"
+    r"\s+([\w.]+)", re.IGNORECASE)
+PY_WRITE_RE = re.compile(
+    r"\.(?:saveAsTable|insertInto|writeTo)\(\s*['\"]([^'\"]+)['\"]")
 
 
 def check_sandbox(code: str, sandbox_schema: str) -> None:
-    targets = [m.group(1) for m in SQL_WRITE_RE.finditer(code)]
-    targets += [m.group(1) for m in PY_WRITE_RE.finditer(code)]
+    # Backticks are identifier quoting in Spark SQL; strip them so
+    # `schema`.`table` scans the same as schema.table (prefer a false
+    # positive over a bypass).
+    scan = code.replace("`", "")
+    targets = [m.group(1) for m in SQL_WRITE_RE.finditer(scan)]
+    targets += [m.group(1).replace("`", "") for m in PY_WRITE_RE.finditer(code)]
     for t in targets:
         if "." in t and not t.lower().startswith(sandbox_schema.lower() + "."):
             raise SandboxViolation(
@@ -44,7 +50,13 @@ def check_sandbox(code: str, sandbox_schema: str) -> None:
 
 def split_sql(code: str) -> list[str]:
     stmts, buf, in_str = [], [], False
-    for ch in code:
+    i = 0
+    while i < len(code):
+        ch = code[i]
+        if in_str and ch == "'" and i + 1 < len(code) and code[i + 1] == "'":
+            buf.append("''")
+            i += 2
+            continue
         if ch == "'":
             in_str = not in_str
         if ch == ";" and not in_str:
@@ -54,6 +66,7 @@ def split_sql(code: str) -> list[str]:
             buf = []
         else:
             buf.append(ch)
+        i += 1
     tail = "".join(buf).strip()
     if tail:
         stmts.append(tail)
