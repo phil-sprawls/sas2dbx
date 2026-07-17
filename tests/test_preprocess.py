@@ -36,3 +36,17 @@ def test_macro_block_is_one_step():
     assert len(steps) == 1
     assert steps[0].kind == "macro"
     assert "%mend" in steps[0].code
+
+
+def test_commented_out_code_is_not_a_step():
+    from sas_migrate.preprocess import strip_block_comments
+    src = "/* data temp; set x; run; */\ndata real; set y; run;\n"
+    steps = split_steps(strip_block_comments(src))
+    assert [s.kind for s in steps] == ["data"]
+    assert "real" in steps[0].code
+
+
+def test_implicit_step_boundary_without_run():
+    src = "data a; set b;\nproc print data=a; run;\n"
+    steps = split_steps(src)
+    assert [s.kind for s in steps] == ["data", "proc"]

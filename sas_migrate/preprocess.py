@@ -13,6 +13,13 @@ LET_RE = re.compile(r"^\s*%let\s+(\w+)\s*=\s*([^;]*);\s*$", re.IGNORECASE | re.M
 STEP_START_RE = re.compile(r"^\s*(data\b|proc\s+\w+|%macro\b)", re.IGNORECASE)
 STEP_END_RE = re.compile(r"^\s*(run|quit)\s*;", re.IGNORECASE)
 MACRO_END_RE = re.compile(r"^\s*%mend\b.*;", re.IGNORECASE)
+BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+
+
+def strip_block_comments(source: str) -> str:
+    """Remove /* ... */ comments, preserving the newlines they spanned so
+    line-based step splitting sees the same line structure."""
+    return BLOCK_COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), source)
 
 
 @dataclass
@@ -60,7 +67,9 @@ def split_steps(source: str) -> list[SasStep]:
 
     for line in source.splitlines():
         start = STEP_START_RE.match(line)
-        if start and kind == "global":
+        # A new data/proc/%macro line flushes an open data/proc step — SAS's
+        # implicit step boundary. Macro bodies still pass through whole.
+        if start and kind != "macro":
             flush()
             token = start.group(1).lower()
             kind = "macro" if token.startswith("%macro") else \
@@ -78,4 +87,4 @@ def preprocess(path: str) -> tuple[list[SasStep], str]:
     with open(path) as f:
         source = f.read()
     expanded = expand_lets(resolve_includes(source, os.path.dirname(path)))
-    return split_steps(expanded), expanded
+    return split_steps(strip_block_comments(expanded)), expanded
