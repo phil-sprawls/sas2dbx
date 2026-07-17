@@ -70,6 +70,18 @@ def test_check_sandbox_normalizes_comments_and_spaced_dots():
         check_sandbox("DROP TABLE ground_truth . gt", "sandbox_p1")
 
 
+def test_check_sandbox_in_string_comment_does_not_mask_write():
+    with pytest.raises(SandboxViolation):
+        check_sandbox("SELECT 'a--b' AS x; DROP TABLE ground_truth.gt;",
+                      "sandbox_p1")
+
+
+def test_check_sandbox_bracketed_comment_between_keyword_and_target():
+    with pytest.raises(SandboxViolation):
+        check_sandbox("CREATE TABLE /* note */ ground_truth.x AS SELECT 1",
+                      "sandbox_p1")
+
+
 def test_split_sql_handles_escaped_quotes():
     stmts = split_sql("SELECT 'O''Brien; x' AS n; SELECT 2;")
     assert len(stmts) == 2

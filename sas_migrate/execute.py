@@ -37,18 +37,21 @@ PY_WRITE_RE = re.compile(
 
 
 def _scan_text(code: str) -> str:
-    scan = code.replace("`", "")          # identifier quoting
-    scan = re.sub(r"--[^\n]*", " ", scan)  # line comments between tokens
-    scan = re.sub(r"\s*\.\s*", ".", scan)  # spaced qualified names
+    scan = code.replace("`", "")            # identifier quoting
+    scan = re.sub(r"--[^\n]*", " ", scan)    # line comments between tokens
+    scan = re.sub(r"/\*.*?\*/", " ", scan, flags=re.DOTALL)  # bracketed comments
+    scan = re.sub(r"\s*\.\s*", ".", scan)    # spaced qualified names
     return scan
 
 
 def check_sandbox(code: str, sandbox_schema: str) -> None:
-    # Backticks are identifier quoting in Spark SQL; strip them so
-    # `schema`.`table` scans the same as schema.table (prefer a false
-    # positive over a bypass).
-    scan = _scan_text(code)
-    targets = [m.group(1) for m in SQL_WRITE_RE.finditer(scan)]
+    # Union of raw and normalized scans: normalization exists to reveal
+    # obfuscated targets (comments/backticks/spacing), and scanning the raw
+    # text too guarantees it can never hide one. Prefer a false positive
+    # over a bypass.
+    raw = code.replace("`", "")
+    targets = [m.group(1) for m in SQL_WRITE_RE.finditer(raw)]
+    targets += [m.group(1) for m in SQL_WRITE_RE.finditer(_scan_text(code))]
     targets += [m.group(1).replace("`", "") for m in PY_WRITE_RE.finditer(code)]
     for t in targets:
         if "." in t and not t.lower().startswith(sandbox_schema.lower() + "."):
