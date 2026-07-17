@@ -45,6 +45,31 @@ def test_check_sandbox_blocks_insertinto_and_writeto():
     check_sandbox('df.write.insertInto("sandbox_p1.ok")', "sandbox_p1")
 
 
+def test_check_sandbox_blocks_update_delete_alter_replace():
+    for stmt in ("UPDATE ground_truth.gt SET x = 1",
+                 "DELETE FROM ground_truth.gt WHERE x = 1",
+                 "ALTER TABLE ground_truth.gt ADD COLUMN y INT",
+                 "REPLACE TABLE ground_truth.gt AS SELECT 1"):
+        with pytest.raises(SandboxViolation):
+            check_sandbox(stmt, "sandbox_p1")
+    check_sandbox("UPDATE staging SET x = 1", "sandbox_p1")  # unqualified ok
+    check_sandbox("MERGE INTO sandbox_p1.t USING s ON t.k=s.k "
+                  "WHEN MATCHED THEN UPDATE SET x = 1", "sandbox_p1")
+
+
+def test_check_sandbox_blocks_prefix_string_literals():
+    with pytest.raises(SandboxViolation):
+        check_sandbox('df.write.saveAsTable(f"ground_truth.x")', "sandbox_p1")
+
+
+def test_check_sandbox_normalizes_comments_and_spaced_dots():
+    with pytest.raises(SandboxViolation):
+        check_sandbox("CREATE TABLE -- note\nground_truth.x AS SELECT 1",
+                      "sandbox_p1")
+    with pytest.raises(SandboxViolation):
+        check_sandbox("DROP TABLE ground_truth . gt", "sandbox_p1")
+
+
 def test_split_sql_handles_escaped_quotes():
     stmts = split_sql("SELECT 'O''Brien; x' AS n; SELECT 2;")
     assert len(stmts) == 2

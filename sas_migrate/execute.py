@@ -28,18 +28,26 @@ class StepResult:
 
 SQL_WRITE_RE = re.compile(
     r"\b(?:create\s+(?:or\s+replace\s+)?(?:temp(?:orary)?\s+)?(?:table|view)"
-    r"(?:\s+if\s+not\s+exists)?|insert\s+(?:into|overwrite)(?:\s+table)?"
-    r"|merge\s+into|drop\s+table(?:\s+if\s+exists)?|truncate\s+table)"
+    r"(?:\s+if\s+not\s+exists)?|replace\s+table|insert\s+(?:into|overwrite)"
+    r"(?:\s+table)?|merge\s+into|update|delete\s+from|alter\s+table"
+    r"|drop\s+table(?:\s+if\s+exists)?|truncate\s+table)"
     r"\s+([\w.]+)", re.IGNORECASE)
 PY_WRITE_RE = re.compile(
-    r"\.(?:saveAsTable|insertInto|writeTo)\(\s*['\"]([^'\"]+)['\"]")
+    r"\.(?:saveAsTable|insertInto|writeTo)\(\s*[rbfuRBFU]{0,2}['\"]([^'\"]+)['\"]")
+
+
+def _scan_text(code: str) -> str:
+    scan = code.replace("`", "")          # identifier quoting
+    scan = re.sub(r"--[^\n]*", " ", scan)  # line comments between tokens
+    scan = re.sub(r"\s*\.\s*", ".", scan)  # spaced qualified names
+    return scan
 
 
 def check_sandbox(code: str, sandbox_schema: str) -> None:
     # Backticks are identifier quoting in Spark SQL; strip them so
     # `schema`.`table` scans the same as schema.table (prefer a false
     # positive over a bypass).
-    scan = code.replace("`", "")
+    scan = _scan_text(code)
     targets = [m.group(1) for m in SQL_WRITE_RE.finditer(scan)]
     targets += [m.group(1).replace("`", "") for m in PY_WRITE_RE.finditer(code)]
     for t in targets:
