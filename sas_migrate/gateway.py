@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import time
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 from sas_migrate.config import MigrationConfig
@@ -60,6 +60,16 @@ class BaseGateway:
                 "output_tokens": resp.output_tokens, "latency_s": round(latency_s, 3),
             })
 
+    def _log_failure(self, *, model: str, purpose: str, program_id: str,
+                     error: str, latency_s: float = 0.0) -> None:
+        if self._on_call:
+            self._on_call({
+                "ts": time.time(), "model": model, "purpose": purpose,
+                "program_id": program_id, "input_tokens": 0,
+                "output_tokens": 0, "latency_s": round(latency_s, 3),
+                "error": error,
+            })
+
 
 class MockGateway(BaseGateway):
     """Scripted gateway for dev and tests. Raises if the script runs out."""
@@ -72,6 +82,8 @@ class MockGateway(BaseGateway):
     def complete(self, system, messages, *, model=None, max_tokens=None,
                  purpose="", program_id=""):
         if not self._responses:
+            self._log_failure(model=model or "mock", purpose=purpose,
+                              program_id=program_id, error="mock_script_exhausted")
             raise GatewayError("MockGateway script exhausted")
         self.calls.append({"system": system, "messages": messages, "model": model,
                            "purpose": purpose, "program_id": program_id})
@@ -123,6 +135,9 @@ class RestGatewayClient(BaseGateway):
                  purpose="", program_id=""):
         threshold = self.config.gateway_circuit_breaker_threshold
         if self._consecutive_failures >= threshold:
+            self._log_failure(model=model or self.config.default_model,
+                              purpose=purpose, program_id=program_id,
+                              error="circuit_open")
             raise CircuitOpenError(
                 f"{self._consecutive_failures} consecutive gateway failures; halting")
         model = model or self.config.default_model
@@ -141,6 +156,9 @@ class RestGatewayClient(BaseGateway):
                 return resp
             except GatewayError as e:
                 last_err = e
-                self._retry_sleep(2 ** attempt)
+                if attempt < self.config.gateway_max_retries - 1:
+                    self._retry_sleep(2 ** attempt)
         self._consecutive_failures += 1
+        self._log_failure(model=model, purpose=purpose, program_id=program_id,
+                          error=f"retries_exhausted: {last_err}")
         raise GatewayError(f"gateway failed after retries: {last_err}")

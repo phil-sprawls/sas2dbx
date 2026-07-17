@@ -72,3 +72,21 @@ def test_rest_client_build_request_is_in_tenant_fill_in():
     client = RestGatewayClient(MigrationConfig(), auth_token="t")
     with pytest.raises(NotImplementedError):
         client.complete("sys", [{"role": "user", "content": "x"}])
+
+
+def test_on_call_hook_receives_failure_record():
+    records = []
+
+    def dead_transport(payload):
+        raise GatewayError("down")
+
+    cfg = MigrationConfig(gateway_max_retries=2)
+    client = RestGatewayClient(cfg, auth_token="t", transport=dead_transport,
+                               on_call=records.append, retry_sleep=lambda s: None)
+    client._build_request = lambda **kw: {}
+    client._parse_response = lambda raw: None
+    with pytest.raises(GatewayError):
+        client.complete("sys", [{"role": "user", "content": "x"}])
+    assert len(records) == 1
+    assert "error" in records[0]
+    assert records[0]["output_tokens"] == 0
