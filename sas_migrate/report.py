@@ -21,7 +21,8 @@ def parity_certificate(rec: ProgramRecord, outcome: ProgramOutcome,
                        snapshot_hashes: dict[str, str]) -> str:
     tol = rec.float_rel_tol if rec.float_rel_tol is not None else config.float_rel_tol
     tables = "\n".join(
-        f"| {t.table} | {t.gt_rows} | {t.out_rows} | PASS |"
+        f"| {t.table} | {t.gt_rows} | {t.out_rows} | "
+        f"{'PASS' if t.passed else 'FAIL'} |"
         for t in diff.table_diffs)
     snaps = "\n".join(f"- `{t}`: `{h}`" for t, h in sorted(snapshot_hashes.items())) \
             or "- (none recorded)"
@@ -51,7 +52,8 @@ def triage_report(rec: ProgramRecord, outcome: ProgramOutcome,
     if diff is not None and outcome.failure_mode == "diverged":
         evidence = diff.to_text()
     code_sections = "\n".join(
-        f"### Step {idx} ({t.language})\n```{t.language}\n{t.code}\n```"
+        f"### Step {idx} ({t.language})\n"
+        f"```{'python' if t.language == 'pyspark' else t.language}\n{t.code}\n```"
         for idx, t in sorted(translated.items()))
     return f"""# Triage Report — {rec.program_id}
 
