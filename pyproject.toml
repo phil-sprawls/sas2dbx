@@ -1,0 +1,19 @@
+[project]
+name = "sas-migrate"
+version = "0.1.0"
+description = "SAS to Databricks migration agent with output data parity validation"
+requires-python = ">=3.10"
+dependencies = []  # runtime uses Databricks Runtime built-ins only (JFrog constraint)
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pyspark>=3.4", "pandas>=1.5"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["sas_migrate"]
