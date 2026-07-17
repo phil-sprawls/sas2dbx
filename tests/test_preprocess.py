@@ -50,3 +50,9 @@ def test_implicit_step_boundary_without_run():
     src = "data a; set b;\nproc print data=a; run;\n"
     steps = split_steps(src)
     assert [s.kind for s in steps] == ["data", "proc"]
+
+
+def test_multiline_proc_with_data_option_stays_one_step():
+    src = "proc means\n  data=work.filtered noprint;\n  var balance;\nrun;\n"
+    steps = split_steps(src)
+    assert [s.kind for s in steps] == ["proc"]

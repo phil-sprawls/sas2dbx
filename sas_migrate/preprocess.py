@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 INCLUDE_RE = re.compile(r"%include\s+['\"]([^'\"]+)['\"]\s*;", re.IGNORECASE)
 LET_RE = re.compile(r"^\s*%let\s+(\w+)\s*=\s*([^;]*);\s*$", re.IGNORECASE | re.MULTILINE)
-STEP_START_RE = re.compile(r"^\s*(data\b|proc\s+\w+|%macro\b)", re.IGNORECASE)
+STEP_START_RE = re.compile(r"^\s*(data\b(?!\s*=)|proc\s+\w+|%macro\b)", re.IGNORECASE)
 STEP_END_RE = re.compile(r"^\s*(run|quit)\s*;", re.IGNORECASE)
 MACRO_END_RE = re.compile(r"^\s*%mend\b.*;", re.IGNORECASE)
 BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
