@@ -47,6 +47,11 @@ class RepairLoop:
                         step, full_program, table_schemas, input_mappings,
                         executor.schema, program_id)
 
+            if not translated:
+                return (ProgramOutcome(program_id, "triage", "never_ran", 0, 0,
+                                       "no translatable steps found in program"),
+                        translated, diff)
+
             for outer in range(1, self.config.max_match_repairs + 1):
                 executor.reset()
                 run_error = None

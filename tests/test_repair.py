@@ -1,5 +1,3 @@
-import pytest
-
 from sas_migrate.config import MigrationConfig
 from sas_migrate.gateway import MockGateway, TokenBudget, TokenBudgetExceeded
 from sas_migrate.preprocess import SasStep
@@ -52,7 +50,7 @@ def _loop(responses, attempts_log=None):
                       on_attempt=(attempts_log.append if attempts_log is not None else None))
 
 
-def test_happy_path_first_try(  ):
+def test_happy_path_first_try():
     loop = _loop([GOOD_SQL])
     outcome, translated, diff = loop.run(
         "p1", STEPS, "prog", {}, {}, FakeExecutor([True]), lambda: _diff(True))
@@ -110,3 +108,13 @@ def test_budget_exhaustion_routes_to_budget():
         "p1", STEPS, "prog", {}, {}, FakeExecutor([True]), lambda: _diff(True))
     assert outcome.status == "triage"
     assert outcome.failure_mode == "budget"
+
+
+def test_no_translatable_steps_routes_to_triage():
+    loop = _loop([])
+    steps = [SasStep(0, "global", "options nodate;")]
+    outcome, translated, diff = loop.run(
+        "p1", steps, "prog", {}, {}, FakeExecutor([]), lambda: _diff(False))
+    assert outcome.status == "triage"
+    assert outcome.failure_mode == "never_ran"
+    assert translated == {} and diff is None
