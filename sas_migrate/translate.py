@@ -117,3 +117,95 @@ two-block format. Do not change which tables it reads or writes.
 {diff_text}
 ```"""
     return [{"role": "user", "content": content}]
+
+
+import json
+import re
+from dataclasses import dataclass
+
+from sas_migrate.config import MigrationConfig
+from sas_migrate.gateway import BaseGateway, TokenBudget
+
+JSON_BLOCK_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+CODE_BLOCK_RE = re.compile(r"```(sql|python|pyspark)\s*\n(.*?)```", re.DOTALL)
+
+
+class TranslationParseError(Exception):
+    def __init__(self, msg: str, raw: str = ""):
+        super().__init__(msg)
+        self.raw = raw
+
+
+@dataclass
+class TranslatedStep:
+    step_index: int
+    language: str            # "sql" | "pyspark"
+    code: str
+    inputs: list[str]
+    outputs: list[str]
+
+
+def parse_translation_response(text: str, step_index: int) -> TranslatedStep:
+    header_m = JSON_BLOCK_RE.search(text)
+    if not header_m:
+        raise TranslationParseError("missing ```json header block", raw=text)
+    try:
+        header = json.loads(header_m.group(1))
+    except json.JSONDecodeError as e:
+        raise TranslationParseError(f"bad json header: {e}", raw=text) from e
+    code_m = CODE_BLOCK_RE.search(text, header_m.end())
+    if not code_m:
+        raise TranslationParseError("missing code block after header", raw=text)
+    language = header.get("language", "")
+    if language not in ("sql", "pyspark"):
+        raise TranslationParseError(f"language must be sql|pyspark, got {language!r}",
+                                    raw=text)
+    return TranslatedStep(step_index=step_index, language=language,
+                          code=code_m.group(2).strip(),
+                          inputs=list(header.get("inputs", [])),
+                          outputs=list(header.get("outputs", [])))
+
+
+class Translator:
+    def __init__(self, gateway: BaseGateway, config: MigrationConfig,
+                 budget: TokenBudget):
+        self.gateway = gateway
+        self.config = config
+        self.budget = budget
+
+    def _call(self, messages: list[dict], step_index: int, purpose: str,
+              program_id: str) -> TranslatedStep:
+        resp = self.gateway.complete(SYSTEM_PROMPT, messages,
+                                     model=self.config.default_model,
+                                     purpose=purpose, program_id=program_id)
+        self.budget.charge(resp.input_tokens + resp.output_tokens)
+        try:
+            return parse_translation_response(resp.text, step_index)
+        except TranslationParseError as first_err:
+            retry = messages + [
+                {"role": "assistant", "content": resp.text},
+                {"role": "user", "content":
+                    f"Your response could not be parsed: {first_err}. Reply again "
+                    "with EXACTLY one ```json header block then one code block."}]
+            resp2 = self.gateway.complete(SYSTEM_PROMPT, retry,
+                                          model=self.config.default_model,
+                                          purpose=purpose + "_reparse",
+                                          program_id=program_id)
+            self.budget.charge(resp2.input_tokens + resp2.output_tokens)
+            return parse_translation_response(resp2.text, step_index)
+
+    def translate(self, step, full_program, table_schemas, input_mappings,
+                  sandbox_schema, program_id) -> TranslatedStep:
+        messages = build_translation_prompt(step, full_program, table_schemas,
+                                            input_mappings, sandbox_schema)
+        return self._call(messages, step.index, "translate", program_id)
+
+    def repair_run(self, tstep: TranslatedStep, error_text: str,
+                   program_id: str) -> TranslatedStep:
+        messages = build_run_repair_prompt(tstep.code, tstep.language, error_text)
+        return self._call(messages, tstep.step_index, "repair_run", program_id)
+
+    def repair_match(self, tstep: TranslatedStep, diff_text: str,
+                     program_id: str) -> TranslatedStep:
+        messages = build_match_repair_prompt(tstep.code, tstep.language, diff_text)
+        return self._call(messages, tstep.step_index, "repair_match", program_id)
